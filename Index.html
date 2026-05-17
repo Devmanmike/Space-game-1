@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>Spaceship Interior Module</title>
+
+<style>
+html,body{
+    margin:0;
+    overflow:hidden;
+    background:#05070d;
+    font-family:Arial,Helvetica,sans-serif;
+    touch-action:none;
+}
+
+canvas{
+    display:block;
+    position:fixed;
+    inset:0;
+}
+
+#ui{
+    position:fixed;
+    top:10px;
+    left:10px;
+    z-index:5;
+    color:white;
+    background:rgba(0,0,0,.45);
+    padding:10px 14px;
+    border-radius:12px;
+    backdrop-filter:blur(4px);
+}
+
+#exitBtn{
+    position:fixed;
+    top:15px;
+    right:15px;
+    z-index:10;
+    background:#111827;
+    color:white;
+    border:none;
+    border-radius:12px;
+    padding:12px 18px;
+    font-size:16px;
+}
+
+#interactBtn{
+    position:fixed;
+    bottom:25px;
+    right:25px;
+    width:90px;
+    height:90px;
+    border-radius:50%;
+    border:none;
+    font-size:18px;
+    color:white;
+    background:#2563eb;
+    z-index:10;
+}
+
+#joystickBase{
+    position:fixed;
+    left:25px;
+    bottom:25px;
+    width:130px;
+    height:130px;
+    border-radius:50%;
+    background:rgba(255,255,255,.08);
+    border:2px solid rgba(255,255,255,.15);
+    z-index:10;
+}
+
+#joystickStick{
+    position:absolute;
+    left:35px;
+    top:35px;
+    width:60px;
+    height:60px;
+    border-radius:50%;
+    background:rgba(255,255,255,.25);
+}
+</style>
+</head>
+<body>
+
+<div id="ui">
+    <div><b>Ship Interior</b></div>
+    <div>WASD / Joystick to move</div>
+    <div>E / INTERACT near objects</div>
+</div>
+
+<button id="exitBtn">EXIT SHIP</button>
+<button id="interactBtn">INTERACT</button>
+
+<div id="joystickBase">
+    <div id="joystickStick"></div>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+}
+resize();
+addEventListener('resize',resize);
+
+const player = {
+    x:0,
+    y:0,
+    r:16,
+    speed:3,
+    color:'#00d4ff'
+};
+
+const keys = {};
+
+addEventListener('keydown',e=>keys[e.key.toLowerCase()] = true);
+addEventListener('keyup',e=>keys[e.key.toLowerCase()] = false);
+
+const walls = [
+    {x:-450,y:-300,w:900,h:40},
+    {x:-450,y:260,w:900,h:40},
+    {x:-450,y:-300,w:40,h:600},
+    {x:410,y:-300,w:40,h:600},
+
+    {x:-120,y:-300,w:40,h:180},
+    {x:-120,y:40,w:40,h:260},
+
+    {x:120,y:-120,w:40,h:420},
+
+    {x:-450,y:-20,w:220,h:40},
+    {x:200,y:120,w:250,h:40}
+];
+
+const rooms = [
+    {
+        x:-300,
+        y:-200,
+        label:'ENGINE ROOM'
+    },
+    {
+        x:250,
+        y:-220,
+        label:'BRIDGE'
+    },
+    {
+        x:280,
+        y:220,
+        label:'STORAGE'
+    },
+    {
+        x:-260,
+        y:200,
+        label:'CREW QUARTERS'
+    }
+];
+
+const terminals = [
+    {
+        x:300,
+        y:-180,
+        w:50,
+        h:30,
+        label:'Navigation Console',
+        action:'bridge'
+    },
+    {
+        x:-300,
+        y:-180,
+        w:50,
+        h:30,
+        label:'Engine Controls',
+        action:'engine'
+    },
+    {
+        x:260,
+        y:170,
+        w:50,
+        h:30,
+        label:'Storage Access',
+        action:'storage'
+    }
+];
+
+let joystick = {
+    active:false,
+    dx:0,
+    dy:0
+};
+
+const joyBase = document.getElementById('joystickBase');
+const joyStick = document.getElementById('joystickStick');
+
+function setStick(x,y){
+    joyStick.style.transform = `translate(${x}px,${y}px)`;
+}
+
+joyBase.addEventListener('pointerdown',startJoy);
+window.addEventListener('pointermove',moveJoy);
+window.addEventListener('pointerup',endJoy);
+
+function startJoy(e){
+    joystick.active = true;
+    moveJoy(e);
+}
+
+function moveJoy(e){
+    if(!joystick.active) return;
+
+    const rect = joyBase.getBoundingClientRect();
+    const cx = rect.left + rect.width/2;
+    const cy = rect.top + rect.height/2;
+
+    let dx = e.clientX - cx;
+    let dy = e.clientY - cy;
+
+    const dist = Math.hypot(dx,dy);
+    const max = 40;
+
+    if(dist > max){
+        dx = dx / dist * max;
+        dy = dy / dist * max;
+    }
+
+    joystick.dx = dx/max;
+    joystick.dy = dy/max;
+
+    setStick(dx,dy);
+}
+
+function endJoy(){
+    joystick.active = false;
+    joystick.dx = 0;
+    joystick.dy = 0;
+    setStick(0,0);
+}
+
+function rectsOverlap(a,b){
+    return (
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.h &&
+        a.y + a.h > b.y
+    );
+}
+
+function canMove(nx,ny){
+    const hitbox = {
+        x:nx-player.r,
+        y:ny-player.r,
+        w:player.r*2,
+        h:player.r*2
+    };
+
+    for(const wall of walls){
+        if(rectsOverlap(hitbox,wall)){
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function update(){
+    let mx = 0;
+    let my = 0;
+
+    if(keys['w']) my -= 1;
+    if(keys['s']) my += 1;
+    if(keys['a']) mx -= 1;
+    if(keys['d']) mx += 1;
+
+    mx += joystick.dx;
+    my += joystick.dy;
+
+    const mag = Math.hypot(mx,my);
+
+    if(mag > 0){
+        mx /= mag;
+        my /= mag;
+
+        const nx = player.x + mx * player.speed;
+        const ny = player.y + my * player.speed;
+
+        if(canMove(nx,player.y)) player.x = nx;
+        if(canMove(player.x,ny)) player.y = ny;
+    }
+}
+
+function drawGrid(){
+    const size = 60;
+
+    ctx.strokeStyle = 'rgba(255,255,255,.04)';
+    ctx.lineWidth = 1;
+
+    for(let x=-2000;x<2000;x+=size){
+        ctx.beginPath();
+        ctx.moveTo(x,-2000);
+        ctx.lineTo(x,2000);
+        ctx.stroke();
+    }
+
+    for(let y=-2000;y<2000;y+=size){
+        ctx.beginPath();
+        ctx.moveTo(-2000,y);
+        ctx.lineTo(2000,y);
+        ctx.stroke();
+    }
+}
+
+function render(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    ctx.save();
+
+    ctx.translate(canvas.width/2 - player.x, canvas.height/2 - player.y);
+
+    drawGrid();
+
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(-450,-300,900,600);
+
+    for(const wall of walls){
+        ctx.fillStyle = '#4b5563';
+        ctx.fillRect(wall.x,wall.y,wall.w,wall.h);
+    }
+
+    for(const room of rooms){
+        ctx.fillStyle = 'rgba(255,255,255,.6)';
+        ctx.font = '20px Arial';
+        ctx.fillText(room.label,room.x,room.y);
+    }
+
+    for(const term of terminals){
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(term.x,term.y,term.w,term.h);
+
+        ctx.fillStyle = 'white';
+        ctx.font = '14px Arial';
+        ctx.fillText('Terminal',term.x-5,term.y-10);
+    }
+
+    ctx.beginPath();
+    ctx.fillStyle = player.color;
+    ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#67e8f9';
+    ctx.lineWidth = 3;
+    ctx.arc(player.x,player.y,player.r+6,0,Math.PI*2);
+    ctx.stroke();
+
+    ctx.restore();
+
+    drawInteractionPrompt();
+}
+
+function nearestTerminal(){
+    let nearest = null;
+    let best = Infinity;
+
+    for(const t of terminals){
+        const d = Math.hypot(player.x - t.x, player.y - t.y);
+
+        if(d < best){
+            best = d;
+            nearest = t;
+        }
+    }
+
+    if(best < 80) return nearest;
+    return null;
+}
+
+function drawInteractionPrompt(){
+    const t = nearestTerminal();
+
+    if(!t) return;
+
+    ctx.fillStyle = 'white';
+    ctx.font = '20px Arial';
+    ctx.fillText(
+        `Press E to use ${t.label}`,
+        20,
+        canvas.height - 140
+    );
+}
+
+function interact(){
+    const t = nearestTerminal();
+
+    if(!t) return;
+
+    if(t.action === 'bridge'){
+        alert('Bridge controls opened. Hook this into your galaxy map.');
+    }
+
+    if(t.action === 'engine'){
+        alert('Engine controls opened. Hook this into ship upgrades.');
+    }
+
+    if(t.action === 'storage'){
+        alert('Storage inventory opened. Hook this into your resource system.');
+    }
+}
+
+window.addEventListener('keydown',e=>{
+    if(e.key.toLowerCase() === 'e'){
+        interact();
+    }
+});
+
+document.getElementById('interactBtn').onclick = interact;
+
+document.getElementById('exitBtn').onclick = ()=>{
+    if(window.parent !== window){
+        window.parent.postMessage({
+            type:'EXIT_SHIP_INTERIOR'
+        },'*');
+    }else{
+        alert('Hook this button into your main space game.');
+    }
+};
+
+function loop(){
+    update();
+    render();
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
